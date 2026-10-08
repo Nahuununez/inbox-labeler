@@ -1,0 +1,212 @@
+# Starter rules for inbox-labeler. Edit this file to match YOUR mailbox.
+#
+# How it works
+# ------------
+# * Each top-level key is a Gmail label name. The ORDER of the keys is the
+#   priority order: the first label with a matching rule wins.
+# * `description` explains the label in plain words. When Gemini is enabled it
+#   is used to classify messages that no rule matched, so keep it clear.
+# * `rules` is a list of groups. A message matches a group when:
+#     - both `senders` and `keywords` are given: a sender AND a keyword match;
+#     - only `senders`: any sender matches;
+#     - only `keywords`: any keyword matches.
+# * `senders` are substrings of the sender ADDRESS (not the display name);
+#   `keywords` are substrings of the SUBJECT. Matching ignores case and accents.
+# * Put quotes around words YAML would read as true/false ("off", "no", "yes").
+# * Labels must exist in Gmail before the daily run can apply them: run
+#   `python -m inbox_labeler labels` once
+#   after adding or renaming a label here.
+#
+# These examples use well-known international senders plus a few Spanish
+# keywords. Replace them with the senders you actually receive.
+
+Jobs-Applications:
+  description: >-
+    Confirmation, receipt, status, or follow-up for an actual job application
+    already submitted by the recipient. Joining a talent community, creating a
+    candidate profile, or generic recruiting registration is not an application.
+  rules:
+    - keywords:
+        - thank you for applying
+        - thanks for applying
+        - we received your application
+        - application received
+        - your application was sent
+        - recibimos tu postulación
+        - postulación enviada
+        - gracias por postularte
+    - senders:
+        - linkedin.com
+      keywords:
+        - application sent
+        - you applied
+        - your application to
+
+Jobs-Offers:
+  description: >-
+    A job vacancy, hiring opportunity, recruiter outreach, job alert, or
+    recommended employment opening.
+  rules:
+    - senders:
+        - linkedin.com
+        - indeed.com
+        - glassdoor.com
+        - ziprecruiter.com
+        - wellfound.com
+      keywords:
+        - job alert
+        - new job
+        - jobs for you
+        - is hiring
+        - open position
+        - recruiter
+        - nueva vacante
+        - empleo
+
+Banking-Transactional:
+  description: >-
+    A financial transaction, transfer, payment, debit, statement, balance, card
+    activity, or required banking action from a bank, card issuer, or wallet.
+  rules:
+    - senders:
+        - bank
+        - banco
+        - paypal.com
+        - wise.com
+        - revolut.com
+        - stripe.com
+        - americanexpress.com
+        - visa.com
+        - mastercard.com
+      keywords:
+        - statement
+        - payment
+        - transfer
+        - transaction
+        - debit
+        - balance
+        - resumen
+        - pago
+        - transferencia
+
+Banking-Promos:
+  description: >-
+    A bank, card issuer, wallet, or financial-service offer, discount,
+    installment plan, reward, or benefit.
+  rules:
+    - senders:
+        - bank
+        - banco
+        - paypal.com
+        - revolut.com
+        - americanexpress.com
+        - visa.com
+        - mastercard.com
+      keywords:
+        - cashback
+        - reward
+        - offer
+        - "% off"
+        - benefits
+        - beneficios
+        - cuotas
+        - promo
+
+Promotions:
+  description: >-
+    A non-financial merchant marketing offer, sale, coupon, product promotion,
+    travel deal, or retail newsletter.
+  rules:
+    - senders:
+        - newsletter
+        - marketing
+        - promo
+        - deals
+        - offers
+      keywords:
+        - sale
+        - "% off"
+        - discount
+        - coupon
+        - free shipping
+        - limited time
+        - descuento
+        - oferta
+
+Social-Networking:
+  description: >-
+    Social-network connection requests, messages, profile activity, network
+    updates, or non-job social notifications.
+  rules:
+    - senders:
+        - linkedin.com
+        - facebookmail.com
+        - reddit.com
+        - instagram.com
+        - pinterest.com
+        - meetup.com
+      keywords:
+        - wants to connect
+        - connection request
+        - new follower
+        - commented
+        - mentioned you
+        - sent you a message
+        - viewed your profile
+        - invitación
+        - solicitud de contacto
+
+Government-Local:
+  description: >-
+    A local, city, provincial, or national government service, notice, benefit,
+    procedure, or civic update.
+  rules:
+    - senders:
+        - .gov
+        - .gob.
+        - .gouv.
+
+Subscriptions-Receipts:
+  description: >-
+    A receipt, invoice, completed order, renewal, or subscription confirmation
+    from a merchant or digital service.
+  rules:
+    - keywords:
+        - order confirmation
+        - your receipt
+        - your invoice
+        - payment receipt
+        - subscription renewal
+        - pedido confirmado
+        - tu factura
+    - senders:
+        - netflix.com
+        - spotify.com
+        - apple.com
+        - googleplay-noreply@google.com
+        - billing@
+        - receipts@
+      keywords:
+        - receipt
+        - invoice
+        - renewal
+        - your subscription
+        - recibo
+        - factura
+
+Education:
+  description: >-
+    Courses, classes, school or university matters, learning platforms,
+    enrollment, or academic updates.
+  rules:
+    - senders:
+        - coursera.org
+        - udemy.com
+        - edx.org
+        - khanacademy.org
+        - duolingo.com
+        - .edu
+    - keywords:
+        - your course
+        - new lesson
+        - tutorial

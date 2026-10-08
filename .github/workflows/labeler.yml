@@ -1,0 +1,75 @@
+name: Inbox labeler
+
+# Labels recent INBOX messages using rules.yaml (and optionally Gemini).
+#
+# * Scheduled runs only happen when the repository VARIABLE ENABLE_SCHEDULE is
+#   set to "true", so a fresh copy never runs (and fails) before it is set up.
+# * Manual runs ("Run workflow") are a dry run by default: they only preview
+#   and show counts in the run summary. Tick "apply" to add labels.
+# * The run log and summary contain counts and message ids only, never senders
+#   or subjects.
+
+on:
+  schedule:
+    # 09:00 UTC every day. GitHub cron uses UTC: adjust to your timezone.
+    - cron: "0 9 * * *"
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: "Add labels (true) or only preview (false)"
+        type: boolean
+        default: false
+      days:
+        description: "Look back this many days"
+        type: string
+        default: "2"
+      max_messages:
+        description: "Maximum messages to process"
+        type: string
+        default: "100"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: inbox-labeler
+  cancel-in-progress: false
+
+jobs:
+  organize-inbox:
+    if: ${{ github.event_name == 'workflow_dispatch' || vars.ENABLE_SCHEDULE == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
+      GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
+      GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}
+      # Optional. Without GEMINI_API_KEY (or with USE_GEMINI=false) the run is
+      # rules-only and no email data is sent to Google's Gemini API.
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      USE_GEMINI: ${{ vars.USE_GEMINI }}
+      GEMINI_MODEL: ${{ vars.GEMINI_MODEL }}
+      GEMINI_CONFIDENCE_THRESHOLD: ${{ vars.GEMINI_CONFIDENCE_THRESHOLD }}
+      # Scheduled runs apply labels; manual runs follow the "apply" input.
+      APPLY: ${{ github.event_name == 'schedule' && 'true' || inputs.apply }}
+      DAYS: ${{ inputs.days || '2' }}
+      MAX_MESSAGES: ${{ inputs.max_messages || '100' }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Process recent inbox messages
+        run: |
+          flags=""
+          if [ "$APPLY" = "true" ]; then flags="--apply"; fi
+          python -m inbox_labeler run $flags --days "$DAYS" --max-messages "$MAX_MESSAGES"
