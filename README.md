@@ -107,7 +107,7 @@ Debe decir `Connected to Gmail.` y la cantidad de mensajes de tu casilla.
 
 En <https://aistudio.google.com/> apretá **Get API key / Create API key** (ignorá los avisos de *Upgrade*: el nivel gratuito alcanza). Pegala en tu `.env` como `GEMINI_API_KEY` y volvé a ejecutar `python -m inbox_labeler check`: además de Gmail prueba el modelo con un mensaje ficticio (no envía nada de tu casilla) y muestra cuánto tardó. Si no querés enviar nada a Gemini, saltá este paso.
 
-El modelo predeterminado es `gemini-3.1-flash-lite`. Si `check` informa `FAILED` (modelo saturado o retirado), listá los disponibles con `python -m inbox_labeler models`, probá otro con `GEMINI_MODEL=<nombre>` en tu `.env` y evitá los alias tipo `*-latest`, que cambian de modelo sin avisar.
+Gemini es opcional y falla sin romper nada: si tarda o no responde, las reglas siguen funcionando. Si `check` informa `FAILED`, probá de nuevo más tarde (a veces la API de Google está saturada) o seguí sin Gemini con `USE_GEMINI=false`.
 
 ### 6. Cargá los secretos y variables en GitHub
 
@@ -120,7 +120,7 @@ En tu repositorio: **Settings → Secrets and variables → Actions**.
 | Secret | `GMAIL_REFRESH_TOKEN` | del paso 4 |
 | Secret (opcional) | `GEMINI_API_KEY` | del paso 5 |
 | Variable (opcional) | `USE_GEMINI` | `false` para forzar solo-reglas |
-| Variable (opcional) | `GEMINI_MODEL` | el modelo que te funcionó en `check` |
+| Variable (opcional) | `GEMINI_MODEL` | solo si el predeterminado dejara de estar disponible |
 
 ### 7. Adaptá `rules.yaml` a tu casilla
 
@@ -152,7 +152,6 @@ Con tu `.env` completo (pasos 4 y 5):
 
 ```bash
 python -m inbox_labeler check                 # verifica Gmail y el modelo de Gemini (solo imprime conteos)
-python -m inbox_labeler models                # lista los modelos de Gemini disponibles
 python -m inbox_labeler labels                # crea las etiquetas (antes de aplicar)
 python -m inbox_labeler run                   # igual que la corrida diaria, en vista previa
 python -m inbox_labeler run --apply           # agrega etiquetas de verdad
@@ -201,10 +200,10 @@ Promotions:                       # nombre de la etiqueta en Gmail
 | `Missing environment variables` | Faltan secretos o `.env` | Revisá el paso 6 (o tu `.env` en uso local) |
 | `RulesError: …` | Error de estructura en `rules.yaml` | El mensaje indica la etiqueta y la regla |
 | La corrida programada no se ejecuta | Falta la variable `ENABLE_SCHEDULE=true`, o el workflow no está en la rama principal | Revisá el paso 10; recordá que el horario es UTC |
-| Gemini 503/504 (`high demand`, `DEADLINE_EXCEEDED`) o `read operation timed out` | El modelo está saturado | Esperá y reintentá, probá otro `GEMINI_MODEL` (`python -m inbox_labeler models`) o usá solo-reglas (`USE_GEMINI=false`) |
+| Gemini 503/504 (`high demand`, `DEADLINE_EXCEEDED`) o `read operation timed out` | El modelo está saturado | Esperá un rato y reintentá, o usá solo-reglas (`USE_GEMINI=false`) |
 | `Gemini stopped for the rest of this run` | Cuota agotada o errores repetidos: el programa deja de llamar a Gemini en esa corrida | Las reglas siguen funcionando; los mensajes sin etiquetar se reintentan en la próxima corrida |
 | Errores `429` de Gemini | Cuota del nivel gratuito (unas 12 llamadas por minuto) | Esperá; o usá solo-reglas |
-| Gemini informa un modelo no disponible | Google retiró el modelo | Definí `GEMINI_MODEL` con uno vigente (`python -m inbox_labeler models`) |
+| Gemini informa un modelo no disponible (404) | Google retiró el modelo | Definí la variable `GEMINI_MODEL` con otro modelo vigente (ver la documentación de Gemini) |
 | Gmail `rateLimitExceeded` | Cuota por minuto de Gmail | Se reintenta solo; si persiste, bajá `--max-messages` |
 | PowerShell no deja activar el entorno | Política de ejecución | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 
@@ -218,7 +217,7 @@ inbox_labeler/
   auth.py                  Cliente de Gmail y obtención del token (una sola vez)
   gmail.py                 Etiquetas, lectura de cabeceras y reintentos acotados
   report.py                Resumen con contadores en la pestaña Summary de cada corrida
-  __main__.py              Comandos: run, labels, check, models, token
+  __main__.py              Comandos: run, labels, check, token
 tests/                     Tests con clientes falsos: sin credenciales ni red
 .github/workflows/labeler.yml   Corrida diaria / manual
 ```

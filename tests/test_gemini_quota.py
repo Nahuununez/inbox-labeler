@@ -144,19 +144,25 @@ try:
     assert (name, label) == ("some-model", "Education") and seconds >= 0
     assert ok_client.models.calls == 1
 
-    # list_generate_models: only generateContent models, prefix removed, sorted.
-    class FakeModelList:
-        def list(self):
-            return [
-                SimpleNamespace(name="models/b", supported_actions=["generateContent"]),
-                SimpleNamespace(name="models/embed", supported_actions=["embedContent"]),
-                SimpleNamespace(name="models/a", supported_actions=["generateContent"]),
-                SimpleNamespace(name="models/none", supported_actions=None),
-            ]
-
-    gemini.get_gemini_client = lambda **_kwargs: SimpleNamespace(models=FakeModelList())
-    assert gemini.list_generate_models() == ["a", "b"]
 finally:
     gemini.get_gemini_client = original_client
 
 print("Gemini quota tests passed")
+
+# `check` without a key explains how to enable Gemini and never calls it.
+import contextlib
+import io
+
+from inbox_labeler import __main__ as cli
+
+original_connection, original_enabled = cli.check_connection, cli.gemini_enabled
+cli.check_connection = lambda: print("Connected to Gmail.")
+cli.gemini_enabled = lambda: False
+try:
+    buffer = io.StringIO()
+    with contextlib.redirect_stdout(buffer):
+        cli.run_check()
+finally:
+    cli.check_connection, cli.gemini_enabled = original_connection, original_enabled
+assert "aistudio.google.com" in buffer.getvalue()
+assert "GEMINI_API_KEY" in buffer.getvalue()

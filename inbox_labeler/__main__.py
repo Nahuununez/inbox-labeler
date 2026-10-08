@@ -1,4 +1,4 @@
-"""Command line: ``python -m inbox_labeler {run,labels,token,check,models}``.
+"""Command line: ``python -m inbox_labeler {run,labels,token,check}``.
 
 ``run`` classifies a bounded recent-INBOX window with the rule-first pipeline.
 It is read-only by default; ``--apply`` only adds an existing label and never
@@ -18,7 +18,6 @@ from .gemini import (
     GeminiRateLimitExhausted,
     GeminiResponseError,
     check_model,
-    list_generate_models,
 )
 from .gmail import (
     add_gmail_label_with_retries,
@@ -54,13 +53,17 @@ def run_check():
     """Test Gmail, then (if enabled) one Gemini call on a fictional message."""
     check_connection()
     if not gemini_enabled():
-        print("Gemini: disabled (rules only).")
+        print(
+            "Gemini: disabled (rules only). To enable it, create a key at "
+            "https://aistudio.google.com/ and add it to your .env as "
+            "GEMINI_API_KEY."
+        )
         return
     try:
         model, label, seconds = check_model()
     except (GeminiConfigurationError, GeminiResponseError) as error:
         print(f"Gemini: FAILED - {short_error(error)}")
-        print("Try another model: set GEMINI_MODEL (list them with: models).")
+        print("Labeling still works with rules only; try again later.")
         return
     print(f"Gemini: model {model} answered in {seconds:.1f}s (label: {label}).")
 
@@ -132,7 +135,6 @@ def main():
     commands.add_parser(
         "check", help="Test the Gmail credentials and the configured Gemini model."
     )
-    commands.add_parser("models", help="List the Gemini models you can use.")
     token = commands.add_parser("token", help="One-time local OAuth setup.")
     token.add_argument("client_secret", nargs="?", default="client_secret.json")
     args = parser.parse_args()
@@ -141,9 +143,6 @@ def main():
         return authorize(args.client_secret)
     if args.command == "check":
         return run_check()
-    if args.command == "models":
-        print(*list_generate_models(), sep="\n")
-        return
     if args.command == "labels":
         existing, created = ensure_project_labels(get_gmail_service(), RULE_PRIORITY)
         print("Labels already present:", *existing, sep="\n- ")

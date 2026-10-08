@@ -320,13 +320,3 @@ def check_model(*, model=None, api_key=None):
         api_key=api_key,
     )
     return model, result.label, time.perf_counter() - started_at
-
-
-def list_generate_models(*, api_key=None):
-    """Names of the models that accept ``generateContent``, sorted."""
-    client = get_gemini_client(api_key=api_key)
-    return sorted(
-        model.name.removeprefix("models/")
-        for model in client.models.list()
-        if "generateContent" in (model.supported_actions or [])
-    )
