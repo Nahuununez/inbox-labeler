@@ -102,6 +102,26 @@ assert [message["id"] for message in messages] == ["two"]
 assert failures == []
 assert service.direct_attempts == ["two"]
 
+# A 403 per-minute rate limit is retried; a plain 403 is not.
+class RateLimitError(FakeHttpError):
+    def __init__(self, reason):
+        super().__init__(403)
+        self.content = ('{"error": {"errors": [{"reason": "%s"}]}}' % reason).encode()
+
+
+service = FakeService(
+    {"rate": [RateLimitError("rateLimitExceeded")]}, {"rate": [metadata("rate")]}
+)
+messages, failures = read(service, [{"id": "rate"}])
+assert [message["id"] for message in messages] == ["rate"]
+assert failures == []
+assert service.direct_attempts == ["rate"]
+
+service = FakeService({"denied": [FakeHttpError(403)]}, {"denied": []})
+messages, failures = read(service, [{"id": "denied"}])
+assert messages == [] and failures[0][0] == "denied"
+assert service.direct_attempts == []
+
 # Permanent 400 and 404 responses are retained as failures with no retry.
 for status in (400, 404):
     service = FakeService({"three": [FakeHttpError(status)]}, {"three": []})

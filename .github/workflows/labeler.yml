@@ -16,7 +16,7 @@ on:
   workflow_dispatch:
     inputs:
       apply:
-        description: "Add labels (true) or only preview (false)"
+        description: "Apply: add the labels (checked) or only preview (unchecked)"
         type: boolean
         default: false
       days:
@@ -41,6 +41,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
+      PYTHONUNBUFFERED: "1"
       GMAIL_CLIENT_ID: ${{ secrets.GMAIL_CLIENT_ID }}
       GMAIL_CLIENT_SECRET: ${{ secrets.GMAIL_CLIENT_SECRET }}
       GMAIL_REFRESH_TOKEN: ${{ secrets.GMAIL_REFRESH_TOKEN }}

@@ -173,7 +173,7 @@ daily_delays = []
 daily_summary = {}
 
 
-def daily_fallback(sender, _subject, _rules):
+def daily_fallback(sender, _subject, _rules, **_kwargs):
     daily_classifications.append(sender)
     return SimpleNamespace(
         label="Education", source="rules", gemini_raw_confidence=None
@@ -236,3 +236,33 @@ assert daily_summary["labeled"]["rules"] == 1
 assert daily_summary["failures"] == []
 
 print("Gmail label writer retry tests passed")
+
+
+# execute_with_retries waits and retries per-minute rate limits, then succeeds.
+class FlakyRequest:
+    def __init__(self, outcomes):
+        self.outcomes = list(outcomes)
+
+    def execute(self):
+        outcome = self.outcomes.pop(0)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+
+waits = []
+result = gmail.execute_with_retries(
+    FlakyRequest([FakeHttpError(403, "rateLimitExceeded"), {"ok": True}]),
+    sleep=waits.append,
+)
+assert result == {"ok": True} and waits == [gmail.REQUEST_RETRY_DELAYS_SECONDS[0]]
+
+# A permanent error is raised immediately, without waiting.
+waits = []
+try:
+    gmail.execute_with_retries(FlakyRequest([FakeHttpError(404)]), sleep=waits.append)
+except FakeHttpError:
+    pass
+else:
+    raise AssertionError("a 404 must not be retried")
+assert waits == []

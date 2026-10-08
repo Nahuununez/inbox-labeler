@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from inbox_labeler import gemini
 from inbox_labeler.gemini import (
     GeminiDailyQuotaExhausted,
+    GeminiRateLimitExhausted,
     GeminiRequestStats,
     classify_with_gemini,
     is_daily_quota_exhausted,
@@ -102,6 +103,59 @@ try:
         raise AssertionError("daily quota exhaustion was retried instead of surfaced")
     assert daily_client.models.calls == 1
     assert limiter.deferred == []
+
+    # A persistent temporary 429 gives up after one retry (not minutes of waiting).
+    stuck_client = FakeClient([temporary_429, temporary_429, temporary_429])
+    gemini.get_gemini_client = lambda **_kwargs: stuck_client
+    try:
+        classify_with_gemini(
+            "student@example.com", "Course update", rate_limiter=FakeRateLimiter()
+        )
+    except GeminiRateLimitExhausted:
+        pass
+    else:
+        raise AssertionError("persistent 429 was not surfaced")
+    assert stuck_client.models.calls == 2
+
+    # A persistent 503 (overloaded model) gives up after one retry.
+    class FakeServerError(Exception):
+        code = 503
+
+    server_client = FakeClient([FakeServerError("unavailable")] * 3)
+    gemini.get_gemini_client = lambda **_kwargs: server_client
+    original_sleep = gemini.time.sleep
+    gemini.time.sleep = lambda _seconds: None
+    try:
+        classify_with_gemini(
+            "student@example.com", "Course update", rate_limiter=FakeRateLimiter()
+        )
+    except gemini.GeminiResponseError:
+        pass
+    else:
+        raise AssertionError("persistent 503 was not surfaced")
+    finally:
+        gemini.time.sleep = original_sleep
+    assert server_client.models.calls == 2
+
+    # check_model: one fictional message, returns model, label and seconds.
+    ok_client = FakeClient(['{"label":"Education","confidence":0.99}'])
+    gemini.get_gemini_client = lambda **_kwargs: ok_client
+    name, label, seconds = gemini.check_model(model="some-model")
+    assert (name, label) == ("some-model", "Education") and seconds >= 0
+    assert ok_client.models.calls == 1
+
+    # list_generate_models: only generateContent models, prefix removed, sorted.
+    class FakeModelList:
+        def list(self):
+            return [
+                SimpleNamespace(name="models/b", supported_actions=["generateContent"]),
+                SimpleNamespace(name="models/embed", supported_actions=["embedContent"]),
+                SimpleNamespace(name="models/a", supported_actions=["generateContent"]),
+                SimpleNamespace(name="models/none", supported_actions=None),
+            ]
+
+    gemini.get_gemini_client = lambda **_kwargs: SimpleNamespace(models=FakeModelList())
+    assert gemini.list_generate_models() == ["a", "b"]
 finally:
     gemini.get_gemini_client = original_client
 

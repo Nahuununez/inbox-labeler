@@ -19,16 +19,18 @@ from google.genai import types
 from .rules import LABEL_DESCRIPTIONS, RULE_PRIORITY
 
 # Gemini no longer permits new users to generate with 2.5 Flash-Lite.
-DEFAULT_MODEL = "gemini-3.5-flash-lite"
+DEFAULT_MODEL = "gemini-3.1-flash-lite"
 DEFAULT_CONFIDENCE_THRESHOLD = 0.95
 RATE_LIMIT_STATUS = 429
 RETRYABLE_SERVER_STATUSES = {500, 502, 503, 504}
-MAX_ATTEMPTS = 3
+MAX_ATTEMPTS = 2
+# A rate-limited request waits ~60s before its retry, so allow just one retry.
+MAX_RATE_LIMIT_ATTEMPTS = 2
 RETRY_DELAY_SECONDS = 1
 FREE_TIER_REQUESTS_PER_MINUTE = 12
 MIN_REQUEST_INTERVAL_SECONDS = 60 / FREE_TIER_REQUESTS_PER_MINUTE
 DEFAULT_RATE_LIMIT_WAIT_SECONDS = 60
-GEMINI_HTTP_TIMEOUT_MILLISECONDS = 30_000
+GEMINI_HTTP_TIMEOUT_MILLISECONDS = 20_000
 
 
 class GeminiConfigurationError(RuntimeError):
@@ -37,6 +39,10 @@ class GeminiConfigurationError(RuntimeError):
 
 class GeminiResponseError(RuntimeError):
     """Raised when Gemini cannot return the required structured response."""
+
+
+class GeminiRateLimitExhausted(GeminiResponseError):
+    """Raised when Gemini keeps answering 429 after the allowed retries."""
 
 
 class GeminiDailyQuotaExhausted(GeminiResponseError):
@@ -274,8 +280,8 @@ def classify_with_gemini(
                         f"Gemini daily quota exhausted for model {model!r}: {error}"
                     ) from error
                 stats.rate_limit_retries += 1
-                if attempt == MAX_ATTEMPTS - 1:
-                    raise GeminiResponseError(
+                if attempt >= MAX_RATE_LIMIT_ATTEMPTS - 1:
+                    raise GeminiRateLimitExhausted(
                         f"Gemini API request failed for model {model!r}: {error}"
                     ) from error
                 rate_limiter.defer(
@@ -296,4 +302,31 @@ def classify_with_gemini(
         raise GeminiResponseError("Gemini returned no structured response text")
     return _parse_classification(
         response.text, confidence_threshold=confidence_threshold
+    )
+
+
+def check_model(*, model=None, api_key=None):
+    """Classify one fictional message; return (model, label, seconds).
+
+    Nothing from the mailbox is sent. Raises the usual Gemini errors, so the
+    caller can show why a model does not work (overloaded, wrong name, quota).
+    """
+    model = _model_name(model)
+    started_at = time.perf_counter()
+    result = classify_with_gemini(
+        "newsletter@example.com",
+        "Your weekly digest",
+        model=model,
+        api_key=api_key,
+    )
+    return model, result.label, time.perf_counter() - started_at
+
+
+def list_generate_models(*, api_key=None):
+    """Names of the models that accept ``generateContent``, sorted."""
+    client = get_gemini_client(api_key=api_key)
+    return sorted(
+        model.name.removeprefix("models/")
+        for model in client.models.list()
+        if "generateContent" in (model.supported_actions or [])
     )

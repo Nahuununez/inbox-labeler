@@ -12,7 +12,11 @@ GMAIL_LABEL_WRITE_MAX_ATTEMPTS = 4
 GMAIL_LABEL_WRITE_RETRY_DELAYS_SECONDS = (1, 2, 4)
 BATCH_SIZE = 10
 METADATA_RETRY_ATTEMPTS = 3
-METADATA_RETRY_DELAY_SECONDS = 1
+# Gmail rate limits are per minute, so retries must wait longer than a second.
+RETRY_DELAYS_SECONDS = (5, 20)
+BATCH_PAUSE_SECONDS = 0.5
+REQUEST_MAX_ATTEMPTS = 4
+REQUEST_RETRY_DELAYS_SECONDS = (2, 8, 30)
 TRANSIENT_GMAIL_HTTP_STATUSES = {429, 500, 502, 503, 504}
 TRANSIENT_GMAIL_403_REASONS = {
     "ratelimitexceeded",
@@ -101,8 +105,21 @@ def add_gmail_label_with_retries(service, message_id, gmail_label_id, *, sleep=N
             sleeper(GMAIL_LABEL_WRITE_RETRY_DELAYS_SECONDS[attempt])
 
 
+def execute_with_retries(request, *, sleep=None):
+    """Run a Gmail request, retrying transient and per-minute rate-limit errors."""
+    sleeper = sleep or time.sleep
+    for attempt in range(REQUEST_MAX_ATTEMPTS):
+        try:
+            return request.execute()
+        except Exception as error:
+            final_attempt = attempt == REQUEST_MAX_ATTEMPTS - 1
+            if final_attempt or not is_retriable_gmail_error(error):
+                raise
+            sleeper(REQUEST_RETRY_DELAYS_SECONDS[attempt])
+
+
 def list_labels_by_name(service):
-    response = service.users().labels().list(userId="me").execute()
+    response = execute_with_retries(service.users().labels().list(userId="me"))
     return {label["name"]: label for label in response.get("labels", [])}
 
 
@@ -116,10 +133,9 @@ def ensure_project_labels(service, label_names=RULE_PRIORITY):
             already_existed.append(label_name)
             continue
 
-        service.users().labels().create(
-            userId="me",
-            body={"name": label_name},
-        ).execute()
+        execute_with_retries(
+            service.users().labels().create(userId="me", body={"name": label_name})
+        )
         created.append(label_name)
 
     return already_existed, created
@@ -173,6 +189,8 @@ def get_message_metadata(service, messages, batch_size=BATCH_SIZE, *, allow_part
             for message in messages[start : start + batch_size]:
                 if message["id"] not in responses:
                     errors.setdefault(message["id"], error)
+        if start + batch_size < len(messages):
+            time.sleep(BATCH_PAUSE_SECONDS)
 
     metadata_failures = []
     for message in messages:
@@ -182,9 +200,9 @@ def get_message_metadata(service, messages, batch_size=BATCH_SIZE, *, allow_part
             continue
 
         for attempt in range(1, METADATA_RETRY_ATTEMPTS):
-            if not (gmail_http_status(error) in TRANSIENT_GMAIL_HTTP_STATUSES):
+            if not is_retriable_gmail_error(error):
                 break
-            time.sleep(METADATA_RETRY_DELAY_SECONDS * (2 ** (attempt - 1)))
+            time.sleep(RETRY_DELAYS_SECONDS[attempt - 1])
             try:
                 responses[message_id] = _metadata_request(service, message_id).execute()
                 error = None

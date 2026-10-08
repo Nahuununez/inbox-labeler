@@ -1,4 +1,4 @@
-"""Command line: ``python -m inbox_labeler {run,labels,token,check}``.
+"""Command line: ``python -m inbox_labeler {run,labels,token,check,models}``.
 
 ``run`` classifies a bounded recent-INBOX window with the rule-first pipeline.
 It is read-only by default; ``--apply`` only adds an existing label and never
@@ -12,15 +12,23 @@ from email.utils import parseaddr
 from time import perf_counter
 
 from .auth import authorize, check_connection, get_gmail_service
-from .gemini import GeminiConfigurationError, GeminiResponseError
+from .gemini import (
+    GeminiConfigurationError,
+    GeminiDailyQuotaExhausted,
+    GeminiRateLimitExhausted,
+    GeminiResponseError,
+    check_model,
+    list_generate_models,
+)
 from .gmail import (
     add_gmail_label_with_retries,
     ensure_project_labels,
+    execute_with_retries,
     get_header,
     get_message_metadata,
     list_labels_by_name,
 )
-from .pipeline import classify_with_fallback, gemini_enabled
+from .pipeline import GeminiFallbackUnavailable, classify_with_fallback, gemini_enabled
 from .report import (
     append_github_step_summary,
     build_markdown_summary,
@@ -33,11 +41,28 @@ from .rules import RULE_PRIORITY, load_rules
 DEFAULT_DAYS = 2
 DEFAULT_MESSAGE_LIMIT = 100
 MAX_ERROR_LENGTH = 200
+# Stop calling Gemini for the rest of a run after this many failures in a row.
+MAX_CONSECUTIVE_GEMINI_FAILURES = 2
 
 
 def short_error(error):
     """One-line, bounded error text. Failure lines never include sender/subject."""
     return " ".join(str(error).split())[:MAX_ERROR_LENGTH]
+
+
+def run_check():
+    """Test Gmail, then (if enabled) one Gemini call on a fictional message."""
+    check_connection()
+    if not gemini_enabled():
+        print("Gemini: disabled (rules only).")
+        return
+    try:
+        model, label, seconds = check_model()
+    except (GeminiConfigurationError, GeminiResponseError) as error:
+        print(f"Gemini: FAILED - {short_error(error)}")
+        print("Try another model: set GEMINI_MODEL (list them with: models).")
+        return
+    print(f"Gemini: model {model} answered in {seconds:.1f}s (label: {label}).")
 
 
 def print_summary(
@@ -57,7 +82,7 @@ def print_summary(
         ("Labeled from Gemini", labeled["gemini"]),
         ("Skipped as None", skipped_none),
         ("Already correctly labeled", already_labeled),
-        ("API/Gemini failures", len(failures)),
+        ("Problems (errors or missing labels)", len(failures)),
     ]
     print(f"\nDaily processing summary ({mode}):")
     print(f"Messages scanned: {scanned}")
@@ -65,7 +90,7 @@ def print_summary(
     print(f"Labeled from Gemini: {labeled['gemini']}")
     print(f"Skipped as None: {skipped_none}")
     print(f"Already correctly labeled: {already_labeled}")
-    print(f"API/Gemini failures: {len(failures)}")
+    print(f"Problems (errors or missing labels): {len(failures)}")
     print("Outcome breakdown (of messages scanned):")
     for name, count in metrics[1:]:
         print(f"- {name}: {count} ({percentage(count, scanned)})")
@@ -104,7 +129,10 @@ def main():
         help="Print each classification and action (shows senders and subjects).",
     )
     commands.add_parser("labels", help="Create the labels defined in rules.yaml.")
-    commands.add_parser("check", help="Test the Gmail credentials.")
+    commands.add_parser(
+        "check", help="Test the Gmail credentials and the configured Gemini model."
+    )
+    commands.add_parser("models", help="List the Gemini models you can use.")
     token = commands.add_parser("token", help="One-time local OAuth setup.")
     token.add_argument("client_secret", nargs="?", default="client_secret.json")
     args = parser.parse_args()
@@ -112,7 +140,10 @@ def main():
     if args.command == "token":
         return authorize(args.client_secret)
     if args.command == "check":
-        return check_connection()
+        return run_check()
+    if args.command == "models":
+        print(*list_generate_models(), sep="\n")
+        return
     if args.command == "labels":
         existing, created = ensure_project_labels(get_gmail_service(), RULE_PRIORITY)
         print("Labels already present:", *existing, sep="\n- ")
@@ -144,14 +175,19 @@ def main():
     skipped_none = 0
     already_labeled = 0
     scanned = 0
+    gemini_ok = True
+    gemini_failures_in_row = 0
+    gemini_skipped = 0
 
     try:
-        response = service.users().messages().list(
-            userId="me",
-            labelIds=["INBOX"],
-            q=f"newer_than:{args.days}d",
-            maxResults=args.max_messages,
-        ).execute()
+        response = execute_with_retries(
+            service.users().messages().list(
+                userId="me",
+                labelIds=["INBOX"],
+                q=f"newer_than:{args.days}d",
+                maxResults=args.max_messages,
+            )
+        )
         messages = response.get("messages", [])
     except Exception as error:
         print_summary(
@@ -182,17 +218,37 @@ def main():
         subject = get_header(headers, "Subject")
 
         try:
-            result = classify_with_fallback(sender, subject, rules)
+            result = classify_with_fallback(
+                sender, subject, rules, gemini_available=gemini_ok
+            )
+        except GeminiFallbackUnavailable:
+            gemini_skipped += 1
+            skipped_none += 1
+            final_labels[None] += 1
+            continue
         except (GeminiConfigurationError, GeminiResponseError) as error:
             failures.append(
                 f"Gemini (message {full_message['id']}): {short_error(error)}"
             )
+            gemini_failures_in_row += 1
+            if isinstance(
+                error, (GeminiDailyQuotaExhausted, GeminiRateLimitExhausted)
+            ) or gemini_failures_in_row >= MAX_CONSECUTIVE_GEMINI_FAILURES:
+                gemini_ok = False
+                print(
+                    "Gemini stopped for the rest of this run (quota or repeated "
+                    "errors); remaining messages use rules only.",
+                    flush=True,
+                )
             continue
         except Exception as error:
             failures.append(
                 f"Pipeline (message {full_message['id']}): {short_error(error)}"
             )
             continue
+
+        if result.source == "gemini" or result.gemini_raw_confidence is not None:
+            gemini_failures_in_row = 0
 
         final_labels[result.label] += 1
 
@@ -245,6 +301,11 @@ def main():
         if args.verbose:
             print("Action: label added\n")
 
+    if gemini_skipped:
+        failures.append(
+            f"Gemini was stopped during the run: {gemini_skipped} messages "
+            "matched no rule and were left unlabeled."
+        )
     for label, count in missing_labels.items():
         failures.append(
             f"Missing Gmail label {label!r} ({count} messages). "

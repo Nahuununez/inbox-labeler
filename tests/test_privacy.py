@@ -50,7 +50,7 @@ class FakeService:
         return Execute({"messages": [{"id": "m1"}, {"id": "m2"}]})
 
 
-def run_daily(classify, labels, argv=("inbox_labeler", "run")):
+def run_daily(classify, labels, argv=("inbox_labeler", "run"), count=2):
     originals = {
         name: getattr(daily, name)
         for name in (
@@ -65,7 +65,9 @@ def run_daily(classify, labels, argv=("inbox_labeler", "run")):
     daily.load_rules = lambda: {}
     daily.get_gmail_service = lambda: FakeService()
     daily.list_labels_by_name = lambda _service: labels
-    daily.get_message_metadata = lambda *_args, **_kwargs: [message("m1"), message("m2")]
+    daily.get_message_metadata = lambda *_args, **_kwargs: [
+        message(f"m{number}") for number in range(1, count + 1)
+    ]
     daily.classify_with_fallback = classify
     sys.argv = list(argv)
     output = StringIO()
@@ -127,3 +129,44 @@ finally:
         os.environ["GITHUB_ACTIONS"] = previous
 
 print("Privacy tests passed")
+
+
+# 5. After Gemini hits its rate limit, the run stops calling it (no ~2 minute wait
+#    per message) and the remaining messages are handled by rules only.
+from inbox_labeler.gemini import GeminiRateLimitExhausted
+from inbox_labeler.pipeline import GeminiFallbackUnavailable
+
+gemini_calls = []
+
+
+def rate_limited(_sender, _subject, _rules, *, gemini_available=True, **_kwargs):
+    if not gemini_available:
+        raise GeminiFallbackUnavailable("stopped")
+    gemini_calls.append(1)
+    raise GeminiRateLimitExhausted("429 RESOURCE_EXHAUSTED")
+
+
+output = run_daily(rate_limited, labels={}, count=3)
+assert len(gemini_calls) == 1, gemini_calls
+assert "Gemini stopped for the rest of this run" in output
+assert "Gemini (message m1)" in output
+assert "2 messages matched no rule and were left unlabeled" in output
+assert SECRET_SENDER not in output and SECRET_SUBJECT not in output
+
+
+# 6. Repeated Gemini server errors (503/504) also stop Gemini after 2 in a row.
+from inbox_labeler.gemini import GeminiResponseError
+
+gemini_calls.clear()
+
+
+def overloaded(_sender, _subject, _rules, *, gemini_available=True, **_kwargs):
+    if not gemini_available:
+        raise GeminiFallbackUnavailable("stopped")
+    gemini_calls.append(1)
+    raise GeminiResponseError("503 UNAVAILABLE")
+
+
+output = run_daily(overloaded, labels={}, count=4)
+assert len(gemini_calls) == 2, gemini_calls
+assert "Gemini stopped for the rest of this run" in output

@@ -24,12 +24,12 @@ Estas propiedades están en el código y cubiertas por tests (`python -m tests`)
 
 - **Solo agrega etiquetas.** Nunca borra, archiva, marca como leído ni saca mensajes de la bandeja.
 - **No lee el cuerpo de tus mails.** Pide a Gmail únicamente las cabeceras `From` y `Subject`.
-- **Vista previa por defecto.** Sin `--apply` no se modifica nada. Las ejecuciones manuales en GitHub Actions también son vista previa salvo que marques *apply*.
+- **Vista previa por defecto.** Sin `--apply` no se modifica nada. Las ejecuciones manuales en GitHub Actions también son vista previa salvo que marques *Apply*.
 - **Las corridas programadas no crean etiquetas.** Crear etiquetas es un paso aparte y explícito.
 - **Los logs no filtran tu correo.** El log y el resumen de cada corrida tienen solo contadores e ids de mensaje, nunca remitentes ni asuntos. `--verbose` (que sí los imprime) está bloqueado dentro de GitHub Actions.
 - **Gemini es opcional.** Sin `GEMINI_API_KEY`, o con `USE_GEMINI=false`, no se envía ningún dato a Gemini.
 
-## Privacidad: lo que debés saber
+## Privacidad
 
 - Con Gemini activado, **el remitente y el asunto** de los mensajes que ninguna regla reconoció se envían a la API de Gemini de Google. El cuerpo nunca se envía.
 - Con una API key del nivel gratuito, Google puede usar los datos enviados para mejorar sus productos. **Revisá los términos vigentes de la Gemini API** antes de activarlo. Si no querés eso, usá modo solo-reglas (no pongas la key o definí `USE_GEMINI=false`).
@@ -50,95 +50,113 @@ Estas propiedades están en el código y cubiertas por tests (`python -m tests`)
 
 ### 1. Creá tu copia privada
 
-En esta página usá **Use this template → Create a new repository** y elegí **Private**.
-Si el botón no aparece, clonalo y subilo a un repositorio privado tuyo:
+En la página de este repositorio usá **Use this template → Create a new repository**, elegí **Private** y poné el nombre que quieras. Esto crea la copia en GitHub; todavía no la tenés en tu computadora.
+
+### 2. Descargala a tu computadora
+
+Necesitás [Git](https://git-scm.com/downloads) y [Python 3.12 o superior](https://www.python.org/downloads/) (en Windows, tildá **Add python.exe to PATH** al instalar). Abrí una terminal y ejecutá, con el nombre de **tu** copia:
 
 ```bash
-git clone https://github.com/<usuario-original>/inbox-labeler.git
-cd inbox-labeler
-git remote set-url origin https://github.com/<tu-usuario>/inbox-labeler.git
-git push -u origin main
-```
-
-### 2. Creá las credenciales de Google
-
-Los nombres de los menús de Google Cloud cambian con frecuencia; buscá los términos en inglés.
-
-1. En <https://console.cloud.google.com/> creá un proyecto nuevo.
-2. Habilitá **Gmail API** (APIs & Services → Library).
-3. Configurá la **pantalla de consentimiento / Google Auth Platform**: tipo *External*, nombre de app a gusto, tu email como contacto. Agregá tu propio email como **usuario de prueba** y el scope `.../auth/gmail.modify`.
-4. En **Credentials → Create credentials → OAuth client ID**, tipo **Desktop app**. Descargá el JSON y guardalo en la carpeta del proyecto como `client_secret.json` (Google lo descarga con un nombre largo: renombralo).
-
-> **Importante: vencimiento del token.** Mientras la app esté en estado *Testing*, Google vence el refresh token a los **7 días aproximadamente** y las corridas empezarán a fallar con `invalid_grant`. Para uso personal, pasá la app a **In production** desde la misma pantalla de consentimiento. Como la app es solo tuya y no está verificada, Google mostrará una advertencia al autorizar; es esperable. Confirmá estos detalles en la documentación de Google, que puede cambiar.
-
-### 3. Obtené el token (una sola vez, en tu computadora)
-
-```bash
+git clone https://github.com/<tu-usuario>/<tu-repo>.git
+cd <tu-repo>
 python -m venv .venv
 source .venv/bin/activate          # Windows (PowerShell): .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
+
+> En PowerShell, si el `Activate.ps1` falla por la política de ejecución, corré una vez `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` y repetí.
+
+### 3. Creá las credenciales de Google
+
+Los menús de Google Cloud cambian con frecuencia; buscá los términos en inglés. **Hacé todo esto antes de generar el token** (paso 4).
+
+1. En <https://console.cloud.google.com/> creá un proyecto nuevo.
+2. Habilitá **Gmail API** (APIs & Services → Library).
+3. Entrá a la pestaña **Credentials** de Gmail API: ahí aparece el botón para configurar la **pantalla de consentimiento** (Google Auth Platform). Completá:
+   - **App information:** nombre a gusto y tu email como contacto.
+   - **Audience:** *External* (usuarios externos).
+   - **Contact information:** tu email.
+4. En **Branding**, completá lo que Google pide para poder publicar la app: la página principal y la política de privacidad. Podés usar la de este template:
+   - Página principal: `https://github.com/Nahuununez/inbox-labeler`
+   - Política de privacidad: `https://github.com/Nahuununez/inbox-labeler#privacidad`
+   - Dominio autorizado: `github.com`
+   - Logo y términos del servicio: dejalos vacíos.
+5. En **Data Access**, agregá el scope `https://www.googleapis.com/auth/gmail.modify`.
+6. En **Audience**, apretá **Publish app** para pasar a *In production*.
+7. En **Credentials → Create credentials → OAuth client ID**, tipo **Desktop app**. Descargá el JSON y guardalo en la carpeta del proyecto como `client_secret.json` (Google lo descarga con un nombre largo: renombralo).
+
+> **Por qué publicar antes del token.** Mientras la app esté en *Testing*, Google vence el refresh token a los **7 días** y las corridas fallan con `invalid_grant`. Como la app es solo tuya y no está verificada, Google mostrará una advertencia al autorizar; es esperable.
+
+### 4. Obtené el token (una sola vez)
+
+```bash
 python -m inbox_labeler token
 ```
 
 Se abre el navegador, aceptás los permisos y la terminal imprime tres valores: `GMAIL_CLIENT_ID`, `GMAIL_CLIENT_SECRET` y `GMAIL_REFRESH_TOKEN`. **Tratalos como contraseñas**: no los pegues en chats, issues ni commits.
 
-### 4. (Opcional) API key de Gemini
+Creá tu `.env` (`cp .env.example .env`; en PowerShell `Copy-Item .env.example .env`), pegá esos tres valores y verificá:
 
-Creala en <https://aistudio.google.com/>. Si preferís no enviar nada a Gemini, saltá este paso.
+```bash
+python -m inbox_labeler check
+```
 
-### 5. Cargá los secretos y variables en GitHub
+Debe decir `Connected to Gmail.` y la cantidad de mensajes de tu casilla.
+
+### 5. (Opcional) API key de Gemini
+
+En <https://aistudio.google.com/> apretá **Get API key / Create API key** (ignorá los avisos de *Upgrade*: el nivel gratuito alcanza). Pegala en tu `.env` como `GEMINI_API_KEY` y volvé a ejecutar `python -m inbox_labeler check`: además de Gmail prueba el modelo con un mensaje ficticio (no envía nada de tu casilla) y muestra cuánto tardó. Si no querés enviar nada a Gemini, saltá este paso.
+
+El modelo predeterminado es `gemini-3.1-flash-lite`. Si `check` informa `FAILED` (modelo saturado o retirado), listá los disponibles con `python -m inbox_labeler models`, probá otro con `GEMINI_MODEL=<nombre>` en tu `.env` y evitá los alias tipo `*-latest`, que cambian de modelo sin avisar.
+
+### 6. Cargá los secretos y variables en GitHub
 
 En tu repositorio: **Settings → Secrets and variables → Actions**.
 
 | Tipo | Nombre | Valor |
 |---|---|---|
-| Secret | `GMAIL_CLIENT_ID` | del paso 3 |
-| Secret | `GMAIL_CLIENT_SECRET` | del paso 3 |
-| Secret | `GMAIL_REFRESH_TOKEN` | del paso 3 |
-| Secret (opcional) | `GEMINI_API_KEY` | del paso 4 |
+| Secret | `GMAIL_CLIENT_ID` | del paso 4 |
+| Secret | `GMAIL_CLIENT_SECRET` | del paso 4 |
+| Secret | `GMAIL_REFRESH_TOKEN` | del paso 4 |
+| Secret (opcional) | `GEMINI_API_KEY` | del paso 5 |
 | Variable (opcional) | `USE_GEMINI` | `false` para forzar solo-reglas |
-| Variable (opcional) | `GEMINI_MODEL` | nombre de modelo, si el predeterminado dejara de estar disponible |
+| Variable (opcional) | `GEMINI_MODEL` | el modelo que te funcionó en `check` |
 
-Con GitHub CLI también podés hacerlo desde la terminal, sin copiar valores a mano en el navegador:
+### 7. Adaptá `rules.yaml` a tu casilla
 
-```bash
-gh secret set GMAIL_CLIENT_ID
-gh secret set GMAIL_CLIENT_SECRET
-gh secret set GMAIL_REFRESH_TOKEN
-gh secret set GEMINI_API_KEY        # opcional
-```
+Editá `rules.yaml` (ver [Cómo escribir reglas](#cómo-escribir-reglas)) y hacé commit y push. Los ejemplos incluidos son genéricos: reemplazalos por los remitentes que realmente recibís. Una etiqueta con solo `description` (sin reglas) es válida: la decide Gemini.
 
-### 6. Adaptá `rules.yaml` a tu casilla
+### 8. Creá las etiquetas en Gmail
 
-Editá `rules.yaml` (ver [Cómo escribir reglas](#cómo-escribir-reglas)) y hacé commit. Los ejemplos incluidos son internacionales y genéricos: reemplazalos por los remitentes que realmente recibís.
-
-### 7. Creá las etiquetas en Gmail
-
-Una sola vez, desde tu computadora y con tu `.env` completo (ver *Uso local*):
+Una sola vez, desde tu computadora:
 
 ```bash
 python -m inbox_labeler labels
 ```
 
-Crea las etiquetas que figuran en `rules.yaml` y no existen todavía. Repetilo cada vez que agregues o renombres una etiqueta.
+Crea las etiquetas de `rules.yaml` que no existen todavía. Repetilo cada vez que agregues o renombres una etiqueta.
 
-### 8. Probá en vista previa
+### 9. Probá en vista previa
 
-En **Actions → Inbox labeler → Run workflow** dejá *apply* sin marcar. Al terminar, abrí el **Summary** de la corrida: muestra cuántos mensajes se etiquetarían y por qué etiqueta, sin modificar nada. Cuando te convenza, ejecutalo de nuevo con *apply* marcado y revisá Gmail.
+En **Actions → Inbox labeler → Run workflow** (botón desplegable a la derecha) dejá **Apply** sin marcar y, para la primera prueba, poné *days* en `1` y *max messages* en `20`. Al terminar, abrí el **Summary** de la corrida: muestra cuántos mensajes se etiquetarían y por qué etiqueta, sin modificar nada.
 
-### 9. Activá la ejecución diaria
+Con Gemini activado, cada mensaje sin regla tarda unos 8 segundos (20 mensajes ≈ 3 minutos; 100 pueden tardar 8-15 minutos). Si no querés esperar, la primera prueba puede ser solo con reglas (`USE_GEMINI=false`). Cuando te convenza, ejecutalo de nuevo con **Apply** marcado y revisá Gmail.
 
-Creá la **variable** `ENABLE_SCHEDULE` con valor `true` (Settings → Secrets and variables → Actions → Variables). El workflow corre todos los días a las 09:00 UTC; cambiá el `cron` en `.github/workflows/labeler.yml` si querés otro horario (GitHub usa UTC).
+### 10. Activá la ejecución diaria
+
+Creá la **variable** `ENABLE_SCHEDULE` con valor `true` (Settings → Secrets and variables → Actions → Variables). El workflow corre todos los días a las 09:00 UTC (06:00 en Argentina); cambiá el `cron` en `.github/workflows/labeler.yml` si querés otro horario.
 
 ## Uso local (opcional)
 
-Copiá `.env.example` a `.env` y completá los valores.
+Con tu `.env` completo (pasos 4 y 5):
 
 ```bash
-python -m inbox_labeler check                 # verifica la conexión (solo imprime un conteo)
+python -m inbox_labeler check                 # verifica Gmail y el modelo de Gemini (solo imprime conteos)
+python -m inbox_labeler models                # lista los modelos de Gemini disponibles
+python -m inbox_labeler labels                # crea las etiquetas (antes de aplicar)
 python -m inbox_labeler run                   # igual que la corrida diaria, en vista previa
 python -m inbox_labeler run --apply           # agrega etiquetas de verdad
-python -m inbox_labeler run --days 30 --max-messages 500 --apply   # ventana más amplia
+python -m inbox_labeler run --days 30 --max-messages 500 --apply   # ventana más amplia (el tope es 500)
 python -m inbox_labeler run --verbose         # además imprime remitente y asunto de cada mensaje
 ```
 
@@ -169,7 +187,7 @@ Promotions:                       # nombre de la etiqueta en Gmail
 
 - **Empezá siempre en vista previa** y revisá los resultados antes de aplicar.
 - Las etiquetas **no mueven** los mensajes: siguen en la bandeja. Si querés que se salten la bandeja o se archiven, creá filtros en Gmail basados en las etiquetas; el proyecto no lo hace por vos a propósito.
-- **Cuota de Gemini:** el nivel gratuito tiene límites por minuto y por día. El código espacia las llamadas para respetarlos. Si se agota la cuota diaria, las reglas siguen funcionando y los mensajes que quedaron sin clasificar se reintentan en la próxima corrida, mientras estén dentro de la ventana `--days` (por defecto, 2 días).
+- **Cuota de Gemini:** el nivel gratuito tiene límites por minuto y por día. El código espacia las llamadas para respetarlos. Si se agota la cuota, las reglas siguen funcionando y los mensajes que Gemini no llegó a clasificar se reintentan en cada corrida (y consumen cuota) mientras estén dentro de la ventana `--days` (por defecto, 2 días). Si Gemini te resulta inestable, empezá solo con reglas.
 - **Costo:** Gmail API y el nivel gratuito de Gemini no tienen costo, y una corrida diaria dura pocos minutos de GitHub Actions. Verificá la cuota gratuita de Actions de tu plan para repositorios privados.
 - En repositorios **públicos**, GitHub desactiva los workflows programados tras 60 días sin actividad. Tu copia debería ser privada de todos modos (ver Privacidad).
 - Si sospechás que un secreto se filtró: revocá el acceso en <https://myaccount.google.com/permissions>, volvé a ejecutar `python -m inbox_labeler token` y actualizá los secretos.
@@ -178,13 +196,17 @@ Promotions:                       # nombre de la etiqueta en Gmail
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
-| `invalid_grant` | Token vencido (app en *Testing*) o acceso revocado | Pasá la app a *In production* y repetí el paso 3 |
+| `invalid_grant` | Token vencido (app en *Testing*) o acceso revocado | Pasá la app a *In production* y repetí el paso 4 |
 | `Missing Gmail label 'X'` en el resumen | La etiqueta existe en `rules.yaml` pero no en Gmail | Ejecutá `python -m inbox_labeler labels` |
-| `Missing environment variables` | Faltan secretos o `.env` | Revisá el paso 5 (o tu `.env` en uso local) |
+| `Missing environment variables` | Faltan secretos o `.env` | Revisá el paso 6 (o tu `.env` en uso local) |
 | `RulesError: …` | Error de estructura en `rules.yaml` | El mensaje indica la etiqueta y la regla |
-| La corrida programada no se ejecuta | Falta la variable `ENABLE_SCHEDULE=true`, o el workflow no está en la rama principal | Revisá el paso 9; recordá que el horario es UTC |
-| Errores `429` de Gemini | Cuota del nivel gratuito | Esperá; o usá solo-reglas (`USE_GEMINI=false`) |
-| Gemini informa un modelo no disponible | Google retiró el modelo predeterminado | Definí la variable `GEMINI_MODEL` con un modelo vigente (ver la documentación de Gemini) |
+| La corrida programada no se ejecuta | Falta la variable `ENABLE_SCHEDULE=true`, o el workflow no está en la rama principal | Revisá el paso 10; recordá que el horario es UTC |
+| Gemini 503/504 (`high demand`, `DEADLINE_EXCEEDED`) o `read operation timed out` | El modelo está saturado | Esperá y reintentá, probá otro `GEMINI_MODEL` (`python -m inbox_labeler models`) o usá solo-reglas (`USE_GEMINI=false`) |
+| `Gemini stopped for the rest of this run` | Cuota agotada o errores repetidos: el programa deja de llamar a Gemini en esa corrida | Las reglas siguen funcionando; los mensajes sin etiquetar se reintentan en la próxima corrida |
+| Errores `429` de Gemini | Cuota del nivel gratuito (unas 12 llamadas por minuto) | Esperá; o usá solo-reglas |
+| Gemini informa un modelo no disponible | Google retiró el modelo | Definí `GEMINI_MODEL` con uno vigente (`python -m inbox_labeler models`) |
+| Gmail `rateLimitExceeded` | Cuota por minuto de Gmail | Se reintenta solo; si persiste, bajá `--max-messages` |
+| PowerShell no deja activar el entorno | Política de ejecución | `Set-ExecutionPolicy -Scope CurrentUser RemoteSigned` |
 
 ## Estructura del proyecto
 
@@ -196,7 +218,7 @@ inbox_labeler/
   auth.py                  Cliente de Gmail y obtención del token (una sola vez)
   gmail.py                 Etiquetas, lectura de cabeceras y reintentos acotados
   report.py                Resumen con contadores en la pestaña Summary de cada corrida
-  __main__.py              Comandos: run, labels, check, token
+  __main__.py              Comandos: run, labels, check, models, token
 tests/                     Tests con clientes falsos: sin credenciales ni red
 .github/workflows/labeler.yml   Corrida diaria / manual
 ```
